@@ -1,55 +1,31 @@
 #!/usr/bin/env python3
-
-""" Module for filtering sensitive data
-This module provides a logger with redaction for sensitive data.
-The module defines a RedactingFormatter class.
-This formatter is used to redact sensitive data.
-Example usage:
-    logger = get_logger()
-    logger.info("User logged in: name=john, email=john@example.com")
-We define a list of fields to redact, PII_FIELDS.
-Contains a get_logger() function that returns a logger object.
+"""Module for personal data project
 """
 
+
 import logging
-import re
-from typing import List
 import os
 import mysql.connector
-from mysql.connector import connection
-
-# Define PII_FIELDS constant with fields to be considered as PII
-# Personal Identifiable Information (PII) fields, in other words sensitive
-PII_FIELDS = ('name', 'password', 'email', 'ssn', 'phone')
+import re
+from typing import List
 
 
-def filter_datum(fields: List[str],
-                 redaction: str, message: str, separator: str) -> str:
-    """
-    Filter sensitive data in a message.
-    Arguments:
-      fields -- list of strings representing fields to obfuscate
-      redaction -- string to replace field values with
-      message -- log line string
-      separator -- character separating fields in the log line
-    Returns:
-    The obfuscated log message.
-    """
-    # Create a regular expression pattern to match the fields to be redacted
-    pattern = '|'.join(f'{field}=[^{separator}]*' for field in fields)
-
-    # Use the re.sub() function to replace the matched fields
-    # with the redaction string
-    # The lambda function is used to split the matched field and replace only
-    # the value with the redaction string
-    filtered_data = re.sub(
-        pattern, lambda m: f"{m.group().split('=')[0]}={redaction}", message)
-    return filtered_data
+patterns = {
+    'extract': lambda x, y: r'(?P<field>{})=[^{}]*'.format('|'.join(x), y),
+    'replace': lambda x: r'\g<field>={}'.format(x),
+}
+# Tuple of PII fields
+PII_FIELDS = ("name", "email", "phone", "ssn", "password")
 
 
 class RedactingFormatter(logging.Formatter):
     """ Redacting Formatter class
-    This class will redact sensitive data from log messages.
+
+    Update the class to accept a list of strings fields constructor argument.
+    Implement the format method to filter values in incoming log records using
+    filter_datum. Values for fields in fields should be filtered.
+    DO NOT extrapolate FORMAT manually. The format method should be less than
+    5 lines long.
     """
 
     REDACTION = "***"
@@ -57,95 +33,147 @@ class RedactingFormatter(logging.Formatter):
     SEPARATOR = ";"
 
     def __init__(self, fields: List[str]):
-        """ Initialize the RedactingFormatter object
-        Arguments:
-          fields -- list of strings representing fields to obfuscate
+        """Initializes the class.
+
+        Args:
+            fields (List[str]): The fields.
         """
         super(RedactingFormatter, self).__init__(self.FORMAT)
-        # Initialize the fields attribute with the provided list of fields
-        self.fields = fields if fields is not None else []
+        self.fields = fields
 
     def format(self, record: logging.LogRecord) -> str:
-        """ Format the log record
-        By first calling the format() method of the parent class, we can
-        obtain the original log message.
-        We then call the filter_datum() function to obfuscate the sensitive
-        data in the log message.
-        Arguments:
-          record -- log record to format
+        """Filters values in incoming log records using filter_datum.
+
+        Args:
+            record (logging.LogRecord): A logging.LogRecord instance.
+
         Returns:
-        The formatted log message.
+            str: A string with all occurrences of the `self.fields` in
+            `record.message` replaced by the `self.REDACTION` string.
         """
-        original_message = super(RedactingFormatter, self).format(record)
-        filtered_data = filter_datum(
-            self.fields, self.REDACTION, original_message, self.SEPARATOR)
-        return filtered_data
+        # Call the parent class's format method to get the formatted log line
+        msg = super(RedactingFormatter, self).format(record)
+        # Use the filter_datum function to perform substitution of self.fields
+        text = filter_datum(self.fields, self.REDACTION, msg, self.SEPARATOR)
+        return text
+
+
+def filter_datum(
+        fields: List[str], redaction: str, message: str, separator: str,
+) -> str:
+    """Returns the log message with certain fields obfuscated.
+
+    Args:
+        fields (List[str]): a list of strings representing all fields to
+        obfuscate.
+        redaction (str): a string representing by what the field will be
+        obfuscated.
+        message (str): a string representing the log line.
+        separator (str): a string representing by which character is separating
+        all fields in the log line (message).
+
+    Returns:
+        str: the log message obfuscated.
+    """
+    extract, replace = (patterns["extract"], patterns["replace"])
+    return re.sub(extract(fields, separator), replace(redaction), message)
 
 
 def get_logger() -> logging.Logger:
-    """ Get a logger object
+    """Returns a logging.Logger object named "user_data".
+
+    The logger should be named "user_data" and only log up to logging.INFO
+    level.
+    It should not propagate messages to other loggers. It should have a
+    StreamHandler with RedactingFormatter as formatter.
+    Create a tuple PII_FIELDS constant at the root of the module containing
+    the fields from user_data.csv that are considered PII. PII_FIELDS can
+    contain only 5 fields - choose the right list of fields that can are
+    considered as “important” PIIs or information that you must hide in your
+    logs. Use it to parameterize the formatter.
+
     Returns:
-    A logging.Logger object.
+        logging.Logger: A logging.Logger instance.
     """
-    logger = logging.getLogger('user_data')  # Create a logger object
-    logger.setLevel(logging.INFO)  # Set the logger level to INFO
-    logger.propagate = False  # Prevent the log messages from being propagated
-
-    # Add a console handler to the logger
-    console_handler = logging.StreamHandler()
-
-    # Set the formatter of the console handler to a RedactingFormatter object
-    formatter = RedactingFormatter(PII_FIELDS)
-    console_handler.setFormatter(formatter)
-
-    # Add the console handler to the logger
-    logger.addHandler(console_handler)
+    # Create a logger with the specified name
+    logger = logging.getLogger("user_data")
+    # Set the logging level to only log messages up to logging.INFO
+    logger.setLevel(logging.INFO)
+    # Create a StreamHandler to output log messages to the console
+    stream_handler = logging.StreamHandler()
+    # Disable propagation of log messages to other loggers
+    logger.propagate = False
+    # Create an instance of the RedactingFormatter class with the PII_FIELDS,
+    # as fields and set the formatter of the handler
+    stream_handler.setFormatter(RedactingFormatter(PII_FIELDS))
+    # Add the handler to the logger
+    logger.addHandler(stream_handler)
     return logger
 
 
-def get_db() -> connection.MySQLConnection:
-    """ We use this function to get a database connection.
-    By using environment variables, we can connect to the database.
+def get_db() -> mysql.connector.connection.MySQLConnection:
+    """Returns a connector to the database
+    (mysql.connector.connection.MySQLConnection object).
+
+    You will connect to a secure holberton database to read a users table.
+    The database is protected by a username and password that are set as
+    environment variables on the server named PERSONAL_DATA_DB_USERNAME,
+    (set the default as “root”), PERSONAL_DATA_DB_PASSWORD (set the default
+    as an empty string) and PERSONAL_DATA_DB_HOST (set the default as
+    “localhost”).
+    The database name is stored in PERSONAL_DATA_DB_NAME.
+
     Returns:
-    A MySQL connection object to the database.
+        mysql.connector.connection.MySQLConnection: Connector to the
+        database.
     """
-    # Retrieve database credentials from environment variables
-    db_username = os.getenv('PERSONAL_DATA_DB_USERNAME', 'root')
-    db_password = os.getenv('PERSONAL_DATA_DB_PASSWORD', '')
-    db_host = os.getenv('PERSONAL_DATA_DB_HOST', 'localhost')
-    db_name = os.getenv('PERSONAL_DATA_DB_NAME')
-
-    # Establish and return a connection to the database
-    return mysql.connector.connect(
-        user=db_username,
-        password=db_password,
+    # Get the environment variables for the database credentials
+    db_host = os.getenv("PERSONAL_DATA_DB_HOST", "localhost")
+    #  OR db_name = os.environ.get('PERSONAL_DATA_DB_USERNAME', 'root')
+    db_name = os.getenv("PERSONAL_DATA_DB_NAME", "")
+    db_user = os.getenv("PERSONAL_DATA_DB_USERNAME", "root")
+    db_pwd = os.getenv("PERSONAL_DATA_DB_PASSWORD", "")
+    # Connect to the database using the obtained credentials
+    connection = mysql.connector.connect(
         host=db_host,
-        database=db_name
+        port=3306,
+        user=db_user,
+        password=db_pwd,
+        database=db_name,
     )
+    return connection
 
 
-def main():
+def main() -> None:
+    """Obtains a database connection using get_db and retrieve all rows in
+    the users table and display each row under a filtered format.
+
+    Filtered fields:
+    1. name
+    2. email
+    3. phone
+    4. ssn
+    5. password
+
+    Only your main function should run when the module is executed.
     """
-    Main function to retrieve & display filtered user data from the database.
-    """
-    # get a database connection
-    db = get_db()
+    # Obtain a logger and set the logging level
     logger = get_logger()
+    logger.setLevel(logging.INFO)
+
+    # Obtain a database connection
+    db = get_db()
     cursor = db.cursor()
 
-    # Retrieve all rows from the users table
-    cursor.execute("SELECT * FROM users;")
-    fields = cursor.column_names
+    # Retrieve all rows in the users table
+    cursor.execute("SELECT * FROM users")
+    rows = cursor.fetchall()
 
-    # Iterate over each row and log the filtered data
-    for row in cursor:
-        # Create a message string by joining the field names and values
-        message = "".join("{}={}; ".format(k, v) for k, v in zip(fields, row))
-        # Log the filtered message
-        logger.info(message.strip())
-
-    cursor.close()
-    db.close()
+    # Display each row under a filtered format
+    for row in rows:
+        message = "; ".join([f"{field}={row[field]}" for field in row.keys()])
+        logger.info(filter_datum(PII_FIELDS, RedactingFormatter.REDACTION,
+                                 message, RedactingFormatter.SEPARATOR))
 
 
 if __name__ == "__main__":
